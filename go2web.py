@@ -1,42 +1,117 @@
 import socket
 import ssl
+from bs4 import BeautifulSoup
+import argparse
+from urllib.parse import quote_plus
 
-def make_https_request(url):
+def https_request(url):
     try:
-        host, path = parse_url(url)
-        
-        with socket.create_connection((host, 443)) as sock:
-            with ssl.create_default_context().wrap_socket(sock, server_hostname=host) as ssock:
-                request = f"GET {path} HTTP/1.1\r\nHost: {host}\r\nConnection: close\r\n\r\n"
-                ssock.sendall(request.encode())
+        # Parse the URL to get host and path
+        url_parts = url.split('//')[-1].split('/')
+        host = url_parts[0]
+        path = '/' + '/'.join(url_parts[1:])
+        port = 443  # Default HTTPS port
 
-                response = b""
-                while True:
-                    data = ssock.recv(1024)
-                    if not data:
-                        break
-                    response += data
+        # Create a socket object
+        client_socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
 
-                return response.decode()
+        # Wrap the socket with SSL context
+        ssl_context = ssl.create_default_context()
+        client_socket = ssl_context.wrap_socket(client_socket, server_hostname=host)
+
+        # Connect to the server
+        client_socket.connect((host, port))
+
+        # Form the HTTPS request
+        request = f"GET {path} HTTP/1.1\r\nHost: {host}\r\n\r\n"
+
+        # Send the request
+        client_socket.sendall(request.encode())
+
+        # Receive the response
+        response = b""
+        while True:
+            part = client_socket.recv(1024)
+            if not part:
+                break
+            response += part
+
+        # Check for success or failure
+        status_code = int(response.decode().split()[1])
+        if 200 <= status_code < 300:
+            print("Success Response:")
+        else:
+            print("Failure Response:")
+
+        # Print the response
+        html_content = response.decode()
+
+        # Use Beautiful Soup to extract relevant content
+        soup = BeautifulSoup(html_content, 'html.parser')
+        relevant_content = soup.get_text()
+
+        print(relevant_content)
+
+        # Close the socket
+        client_socket.close()
     except Exception as e:
-        print("Error making HTTPS request:", e)
-        return None
+        print("Error:", e)
 
-def parse_url(url):
-    if url.startswith("https://"):
-        url = url[len("https://"):]
+def search_google(search_term):
+    try:
+        encoded_search = quote_plus(search_term)
+        request_url = f"/search?q={encoded_search}"
 
-    parts = url.split("/", 1)
-    host = parts[0]
-    path = "/" + parts[1] if len(parts) > 1 else "/"
-    
-    return host, path
+        client_socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
 
-def print_response(response_text):
-    if response_text:
-        print(response_text)
+        client_socket.connect(("www.google.com", 80))
+
+        host = "www.google.com"
+        request = f"GET {request_url} HTTP/1.1\r\nHost: {host}\r\nConnection: close\r\n\r\n"
+        client_socket.sendall(request.encode())
+
+        # Receive the response
+        response = b""
+        while True:
+            part = client_socket.recv(1024)
+            if not part:
+                break
+            response += part
+
+        # Close the socket
+        client_socket.close()
+
+        try:
+            html_content = response.decode('utf-8')
+        except UnicodeDecodeError:
+            html_content = response.decode('ISO-8859-1')
+
+        soup = BeautifulSoup(html_content, 'html.parser')
+        res = soup.find_all("h3") 
+        #print(res)
+        for div in res:
+            search_results = res 
+            if search_results:
+                for i, result in enumerate(search_results[:10], 1):
+                    print(i, result.get_text())
+                break  
+        else:
+            print("No search results found.")
+    except Exception as e:
+        print("Error:", e)
+
 
 if __name__ == "__main__":
-    url = "https://999.md/ro/category/transport"
-    response_text = make_https_request(url)
-    print_response(response_text)
+    
+    parser = argparse.ArgumentParser(description="Creating HTTP requests and retrieving content from websites")
+    parser.add_argument("-u", "--url", help="Make an HTTP request to the specified URL and print the response")
+    parser.add_argument("-s", "--search", help="Make an HTTP request to search the term using your favorite search engine and print top 10 results")
+    args = parser.parse_args()
+
+    if args.url:
+        https_request(args.url)
+    elif args.search:
+        search_google(args.search)
+ 
+    else:
+        print("Please provide either a URL or a search term.")
