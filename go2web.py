@@ -99,7 +99,7 @@ def load_cache():
 
 #save cached data to file
 def save_cache(cache):
-    with open("content_cache.json", "w") as f:
+    with open("cache.json", "w") as f:
         json.dump(cache, f, indent=4)
 
 #retrive data from file
