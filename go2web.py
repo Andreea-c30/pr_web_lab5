@@ -2,21 +2,33 @@ import socket
 import ssl
 from bs4 import BeautifulSoup
 import argparse
-from urllib.parse import quote_plus
+from urllib.parse import quote_plus, urlparse
+import json
+from datetime import datetime, timedelta
 
-def https_request(url, max_redirects=5):
+
+def https_request(url, max_redirects=5, accept="text/html"):
     try:
+        #check cache for data
+        cached_data = get_cached_data(url)
+        print("-------------------------------")
+
+        if cached_data:
+            print("Using stored data for the link: ", url,"\n")
+            print(cached_data)
+            return
+
         #url parsing URL to get host and path
         url_parts = url.split('//')[-1].split('/')
         host = url_parts[0]
         path = '/' + '/'.join(url_parts[1:])
-        port = 443 
+        port = 443  # Default HTTPS port
 
         #create a socket 
         with socket.create_connection((host, port)) as client_socket:
             with ssl.create_default_context().wrap_socket(client_socket, server_hostname=host) as secure_socket:
                 while max_redirects > 0:
-                    request = f"GET {path} HTTP/1.1\r\nHost: {host}\r\nConnection: close\r\n\r\n"
+                    request = f"GET {path} HTTP/1.1\r\nHost: {host}\r\nAccept: {accept}\r\nConnection: close\r\n\r\n"
                     secure_socket.sendall(request.encode())
 
                     response = b""
@@ -45,19 +57,71 @@ def https_request(url, max_redirects=5):
         else:
             print("Failure:")
 
-        #extract content
-        try:
-            html_content = response.decode('utf-8')
-        except UnicodeDecodeError:
-            html_content = response.decode('ISO-8859-1')
-        
-        soup = BeautifulSoup(html_content, 'html.parser')
-        relevant_content = soup.get_text()
+        #content type from header
+        headers = response.split(b"\r\n\r\n", 1)[0].decode("utf-8")
+        content_type = None
+        for header in headers.split("\r\n"):
+            if header.startswith("Content-Type:"):
+                content_type = header.split(":")[1].strip()
+                break
 
-        print(relevant_content)
+        #process the response based on content type html or json
+        if content_type == "application/json":
+            json_content = json.loads(response.split(b"\r\n\r\n", 1)[1].decode("utf-8"))
+            print(json_content)
+            relevant_content = json_content
+        else:
+            try:
+                html_content = response.decode('utf-8')
+            except UnicodeDecodeError:
+                html_content = response.decode('ISO-8859-1')
+        
+            #extract the content
+            soup = BeautifulSoup(html_content, 'html.parser')
+            relevant_content = soup.get_text()
+
+            print(relevant_content)
+
+        #cache the fetched data
+        cache_data(url, relevant_content)
 
     except Exception as e:
         print("Error:", e)
+
+
+#load cached data from a JSON file
+def load_cache():
+    try:
+        with open("cache.json", "r") as f:
+            return json.load(f)
+    except FileNotFoundError:
+        return {}
+
+#save cached data to file
+def save_cache(cache):
+    with open("content_cache.json", "w") as f:
+        json.dump(cache, f, indent=4)
+
+#retrive data from file
+def get_cached_data(url):
+    cache = load_cache()
+    cached_data = cache.get(url)
+    if cached_data:
+        cached_time = datetime.fromisoformat(cached_data["timestamp"])
+        if datetime.now() - cached_time < timedelta(hours=1):
+            return cached_data["content"]
+        else:
+            #delete expired content from file
+            del cache[url]
+            save_cache(cache)
+    return None
+
+#cache fetched data
+def cache_data(url, content):
+    cache = load_cache()
+    cache[url] = {"timestamp": datetime.now().isoformat(), "content": content}
+    save_cache(cache)
+
 
 def search_google(search_term):
     try:
