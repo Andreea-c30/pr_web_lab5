@@ -8,13 +8,10 @@ from datetime import datetime, timedelta
 
 
 def https_request(url, max_redirects=5, accept="text/html"):
-    try:
         #check cache for data
         cached_data = get_cached_data(url)
-        print("-------------------------------")
-
         if cached_data:
-            print("Using stored data for the link: ", url,"\n")
+            print("Using cached data for the link:", url)
             print(cached_data)
             return
 
@@ -24,7 +21,7 @@ def https_request(url, max_redirects=5, accept="text/html"):
         path = '/' + '/'.join(url_parts[1:])
         port = 443  # Default HTTPS port
 
-        #create a socket 
+        #create a socket
         with socket.create_connection((host, port)) as client_socket:
             with ssl.create_default_context().wrap_socket(client_socket, server_hostname=host) as secure_socket:
                 while max_redirects > 0:
@@ -38,17 +35,29 @@ def https_request(url, max_redirects=5, accept="text/html"):
                             break
                         response += part
 
-                    #redirection 
-                    status_code = int(response.split()[1])
+                    #redirection
+                    print("------------------------")
+                    
+                    if response:
+                        status_line = response.split(b"\r\n", 1)[0].decode("utf-8")
+                        if status_line.startswith("HTTP/1.1"):
+                            status_code = int(status_line.split()[1])
+                        else:
+                            print("Invalid HTTP response:", status_line)
+                            return
+                    else:
+                        return
+
+                    print("Status code:", status_code) 
+
                     if 300 <= status_code < 400:
                         max_redirects -= 1
                         redirect_url = extract_redirect_url(response)
                         if not redirect_url:
-                            print("error")
+                            print("error, no url found")
                             break
-                        url_parts = urlparse(redirect_url)
-                        host = url_parts.netloc
-                        path = url_parts.path
+                        print("Redirecting to:", redirect_url)  
+                        https_request(redirect_url)
                     else:
                         break
 
@@ -59,6 +68,7 @@ def https_request(url, max_redirects=5, accept="text/html"):
 
         #content type from header
         headers = response.split(b"\r\n\r\n", 1)[0].decode("utf-8")
+        #print("Response headers:", headers) 
         content_type = None
         for header in headers.split("\r\n"):
             if header.startswith("Content-Type:"):
@@ -75,7 +85,7 @@ def https_request(url, max_redirects=5, accept="text/html"):
                 html_content = response.decode('utf-8')
             except UnicodeDecodeError:
                 html_content = response.decode('ISO-8859-1')
-        
+
             #extract the content
             soup = BeautifulSoup(html_content, 'html.parser')
             relevant_content = soup.get_text()
@@ -85,8 +95,7 @@ def https_request(url, max_redirects=5, accept="text/html"):
         #cache the fetched data
         cache_data(url, relevant_content)
 
-    except Exception as e:
-        print("Error:", e)
+
 
 
 #load cached data from a JSON file
@@ -121,6 +130,14 @@ def cache_data(url, content):
     cache = load_cache()
     cache[url] = {"timestamp": datetime.now().isoformat(), "content": content}
     save_cache(cache)
+
+def extract_redirect_url(response):
+    headers, _, body = response.partition(b'\r\n\r\n')
+    for line in headers.split(b'\r\n'):
+        if line.startswith(b'Location:'):
+            link = line.split(b':', 1)[1].strip().decode()
+            return link
+    return None
 
 
 def search_google(search_term):
